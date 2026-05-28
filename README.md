@@ -6,6 +6,12 @@ Current mode:
 
 - `estimate-mor` - estimate a lidar-aware MOR profile from RGB, sparse depth, intrinsics, and camera extrinsics loaded through `euler-loading`.
 
+## Installation
+
+```bash
+pip install euler-ds-info
+```
+
 ## Usage
 
 ```bash
