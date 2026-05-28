@@ -41,6 +41,22 @@ def _normalize_modalities(value: Any) -> dict[str, str]:
 	return modalities
 
 
+def _normalize_hierarchical_modalities(value: Any) -> dict[str, str]:
+	if value is None:
+		return {}
+	if not isinstance(value, dict) or isinstance(value, list):
+		raise ValueError("hierarchical_modalities must be an object")
+
+	modalities: dict[str, str] = {}
+	for key, entry in value.items():
+		if not isinstance(key, str) or not key.strip():
+			continue
+		if not isinstance(entry, str) or not entry.strip():
+			raise ValueError(f"hierarchical_modalities.{key} must be a non-empty string")
+		modalities[key.strip()] = entry.strip()
+	return modalities
+
+
 def _build_output(
 	mode: str,
 	modalities: dict[str, str],
@@ -64,6 +80,7 @@ def _build_output(
 def run(document: dict[str, Any]) -> dict[str, Any]:
 	mode = _normalize_mode(document.get("mode"))
 	modalities = _normalize_modalities(document.get("modalities"))
+	hierarchical_modalities = _normalize_hierarchical_modalities(document.get("hierarchical_modalities"))
 
 	if mode != "estimate-mor":
 		raise ValueError(f"Unsupported mode: {mode}")
@@ -76,7 +93,11 @@ def run(document: dict[str, Any]) -> dict[str, Any]:
 		) from exc
 
 	dataset = MultiModalDataset(
-		modalities={name: Modality(path) for name, path in modalities.items()}
+		modalities={name: Modality(path) for name, path in modalities.items()},
+		hierarchical_modalities={
+			name: Modality(path, collapse_single=True)
+			for name, path in hierarchical_modalities.items()
+		} or None,
 	)
 
 	per_file_info: dict[str, dict[str, Any]] = {}
