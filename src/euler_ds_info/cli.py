@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Iterable
 from typing import Any, Optional
 
@@ -77,6 +78,10 @@ def _build_output(
 	}
 
 
+def _emit_progress(message: str) -> None:
+	print(message, file=sys.stderr, flush=True)
+
+
 def run(document: dict[str, Any]) -> dict[str, Any]:
 	mode = _normalize_mode(document.get("mode"))
 	modalities = _normalize_modalities(document.get("modalities"))
@@ -100,6 +105,12 @@ def run(document: dict[str, Any]) -> dict[str, Any]:
 		} or None,
 	)
 
+	started_at = time.monotonic()
+	_emit_progress(
+		f"[euler-ds-info] Loaded dataset with {len(dataset)} samples "
+		f"({len(modalities)} regular modalities, {len(hierarchical_modalities)} hierarchical modalities)"
+	)
+
 	per_file_info: dict[str, dict[str, Any]] = {}
 	for index in range(len(dataset)):
 		sample = dataset[index]
@@ -112,6 +123,12 @@ def run(document: dict[str, Any]) -> dict[str, Any]:
 
 		sample_id = _infer_sample_id(sample, index)
 		per_file_info[sample_id] = profile
+		if index == 0 or (index + 1) % 100 == 0 or index + 1 == len(dataset):
+			elapsed = time.monotonic() - started_at
+			_emit_progress(
+				f"[euler-ds-info] Processed {index + 1}/{len(dataset)} samples "
+				f"({len(per_file_info)} profiled, {elapsed:.1f}s elapsed)"
+			)
 
 	return _build_output(mode, modalities, per_file_info)
 
