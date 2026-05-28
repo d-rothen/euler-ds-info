@@ -29,3 +29,9 @@ JSON
 ```
 
 The command prints a single JSON document with per-file MOR profiles and aggregate summary statistics.
+
+## Performance
+
+- The CLI will use `SLURM_CPUS_PER_TASK` automatically when present.
+- You can override the worker count with `--workers N` or `EULER_DS_INFO_WORKERS=N`.
+- The loader still runs sequentially; the speedup comes from parallel per-sample profiling.
