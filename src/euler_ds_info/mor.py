@@ -363,6 +363,30 @@ def _fit_linear(depths: np.ndarray, values: np.ndarray) -> Optional[Tuple[float,
 	return float(slope), float(intercept), residuals
 
 
+def _estimate_beta_from_depth_response(
+	depths: np.ndarray,
+	response: np.ndarray,
+	quantile: float = 0.88,
+) -> Optional[float]:
+	mask = np.isfinite(depths) & np.isfinite(response)
+	mask &= depths > 0
+	mask &= response > 0
+	depths = np.asarray(depths, dtype=np.float64)[mask]
+	response = np.asarray(response, dtype=np.float64)[mask]
+	if depths.size < 3:
+		return None
+
+	beta_samples = response / np.maximum(depths, 1e-6)
+	beta_samples = beta_samples[np.isfinite(beta_samples) & (beta_samples > 0)]
+	if beta_samples.size < 3:
+		return None
+
+	beta = float(np.quantile(beta_samples, quantile))
+	if not np.isfinite(beta) or beta <= 0:
+		return None
+	return beta
+
+
 def _estimate_mor(beta: float) -> Optional[float]:
 	if not np.isfinite(beta) or beta <= 0:
 		return None
@@ -530,16 +554,22 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 	dcp_values = _ensure_positive(valid_local_dark, floor=1e-4)
 	dcp_transmission = np.clip(1.0 - 0.95 * dcp_values, 0.02, 0.99)
 	dcp_response = -np.log(dcp_transmission)
-	dcp_fit = _fit_linear(valid_depths, dcp_response)
-	if dcp_fit is None:
-		fallback_mor = estimate_mor_from_depths(valid_depths)
-		beta_dcp = 3.912 / fallback_mor if fallback_mor and fallback_mor > 0 else None
-		mor_dcp = fallback_mor
-		dcp_residual_mad = None
+	beta_dcp = _estimate_beta_from_depth_response(valid_depths, dcp_response)
+	if beta_dcp is None:
+		dcp_fit = _fit_linear(valid_depths, dcp_response)
+		if dcp_fit is None:
+			fallback_mor = estimate_mor_from_depths(valid_depths)
+			beta_dcp = 3.912 / fallback_mor if fallback_mor and fallback_mor > 0 else None
+			mor_dcp = fallback_mor
+			dcp_residual_mad = None
+		else:
+			dcp_slope, dcp_intercept, dcp_residuals = dcp_fit
+			beta_dcp = max(float(dcp_slope), 1e-6)
+			mor_dcp = _estimate_mor(beta_dcp)
+			dcp_residual_mad = float(np.median(np.abs(dcp_residuals))) if dcp_residuals.size else None
 	else:
-		dcp_slope, dcp_intercept, dcp_residuals = dcp_fit
-		beta_dcp = max(float(dcp_slope), 1e-6)
 		mor_dcp = _estimate_mor(beta_dcp)
+		dcp_residuals = dcp_response - (beta_dcp * valid_depths)
 		dcp_residual_mad = float(np.median(np.abs(dcp_residuals))) if dcp_residuals.size else None
 
 	log_contrast = np.log(_ensure_positive(valid_contrast, floor=1e-4))
@@ -702,10 +732,10 @@ MOR_OUTPUT_GLOSSARY: dict[str, Any] = {
 			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
 			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
 			"description": "Approximate visibility range inferred from dark-channel-prior transmission and lidar depth.",
-			"conceptual_computation": "Estimate RGB transmission with a DCP-like method, pair it with valid projected lidar depths, fit beta in t = exp(-beta * depth), then compute MOR = 3.912 / beta.",
+			"conceptual_computation": "Estimate RGB transmission with a DCP-like method, convert each valid lidar-backed pixel into a per-point extinction sample, take a robust high quantile of beta samples, then compute MOR = 3.912 / beta.",
 			"higher_means": "Clearer image or longer estimated visibility.",
 			"lower_means": "Fogged or hazy image or shorter estimated visibility.",
-			"caveats": "Sensitive to atmospheric-light estimation, dark objects, shadows, sky regions, and RGB-lidar misalignment."
+			"caveats": "Sensitive to atmospheric-light estimation, dark objects, shadows, sky regions, and RGB-lidar misalignment. The estimator intentionally biases toward denser fog when the sample distribution is ambiguous."
 		},
 		"mor_contrast_m": {
 			"label": "MOR from contrast decay",
@@ -726,10 +756,10 @@ MOR_OUTPUT_GLOSSARY: dict[str, Any] = {
 			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
 			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
 			"description": "Extinction coefficient proxy estimated from DCP transmission and lidar depth.",
-			"conceptual_computation": "For each valid sample, compute y = -log(t_dcp), then fit y ~= beta * depth using robust depth-bin statistics.",
+			"conceptual_computation": "For each valid sample, compute y = -log(t_dcp), form per-point beta samples as y / depth, and take a robust upper quantile so dense-fog cues are not flattened by nearby points.",
 			"higher_means": "Stronger estimated atmospheric extinction; more fog or haze.",
 			"lower_means": "Weaker estimated atmospheric extinction; clearer scene.",
-			"caveats": "Bias in transmission estimates from object color or lighting carries into beta_dcp."
+			"caveats": "Bias in transmission estimates from object color or lighting carries into beta_dcp. This is a heuristic estimator, not a calibrated physical scattering model."
 		},
 		"beta_contrast": {
 			"label": "Contrast extinction coefficient",
@@ -896,7 +926,7 @@ def summarize_profiles(profiles: list[dict[str, Any]]) -> dict[str, Any]:
 
 def estimate_mor_from_sample(sample: dict[str, Any]) -> Optional[float]:
 	profile = estimate_mor_profile_from_sample(sample)
-	for field in ("mor_contrast_m", "mor_dcp_m"):
+	for field in ("mor_dcp_m", "mor_contrast_m"):
 		value = profile.get(field)
 		if isinstance(value, (int, float)) and np.isfinite(float(value)) and float(value) > 0:
 			return float(value)
