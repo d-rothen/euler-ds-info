@@ -34,6 +34,15 @@ The output includes a top-level `glossary` section. Metric definitions are share
 `per_file_info` and aggregate reducer outputs, and each metric entry includes display labels,
 units, value ranges, interpretation hints, and caveats for downstream visualization.
 
+To generate a sample artifact for inspection, run:
+
+```bash
+python -m euler_ds_info.dev_artifacts
+```
+
+This writes a realistic sample JSON document to `./.outputs/euler-ds-info.sample.json` by
+calling the real MOR pipeline against a mocked in-memory `euler-loading` dataset.
+
 ## Performance
 
 - The CLI will use `SLURM_CPUS_PER_TASK` automatically when present.
