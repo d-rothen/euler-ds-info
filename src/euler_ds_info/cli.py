@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterable
 from typing import Any, Optional
 
-from .mor import estimate_mor_profile_from_sample, summarize_profiles
+from .mor import estimate_mor_profile_from_sample, mor_output_glossary, summarize_profiles
 
 
 def _load_input_document(raw_input: str) -> dict[str, Any]:
@@ -102,6 +102,7 @@ def _build_output(
 		"modalities": modalities,
 		"per_file_info": per_file_info,
 		"aggregate": summarize_profiles(ordered_profiles),
+		"glossary": mor_output_glossary(),
 		"stats": {
 			"sample_count": len(per_file_info),
 			"valid_count": sum(1 for entry in ordered_profiles if int(entry.get("num_valid_points") or 0) > 0)

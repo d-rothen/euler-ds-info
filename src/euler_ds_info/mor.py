@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -657,8 +658,7 @@ def summarize_mor_values(mor_values: Any) -> dict[str, dict[str, Optional[float]
 	}
 
 
-def summarize_profiles(profiles: list[dict[str, Any]]) -> dict[str, Any]:
-	numeric_fields = [
+MOR_PROFILE_METRIC_FIELDS = [
 		"mor_dcp_m",
 		"mor_contrast_m",
 		"beta_dcp",
@@ -670,7 +670,206 @@ def summarize_profiles(profiles: list[dict[str, Any]]) -> dict[str, Any]:
 		"median_depth_valid_m",
 		"fit_mad",
 		"fog_score_lidar"
-	]
+]
+
+MOR_OUTPUT_GLOSSARY: dict[str, Any] = {
+	"version": "1.0",
+	"mode": "estimate-mor",
+	"metric_semantics": (
+		"Metric definitions are shared between per_file_info and aggregate reducer outputs. "
+		"Aggregate values are reductions over the per-file metric values unless a future entry "
+		"explicitly states different semantics."
+	),
+	"reducers": {
+		"mean": {
+			"label": "Mean",
+			"description": "Arithmetic mean over finite per-file values for the metric."
+		},
+		"median": {
+			"label": "Median",
+			"description": "Median over finite per-file values for the metric."
+		},
+		"p90": {
+			"label": "90th percentile",
+			"description": "90th percentile over finite per-file values for the metric."
+		}
+	},
+	"metrics": {
+		"mor_dcp_m": {
+			"label": "MOR from dark channel prior",
+			"unit": "m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Approximate visibility range inferred from dark-channel-prior transmission and lidar depth.",
+			"conceptual_computation": "Estimate RGB transmission with a DCP-like method, pair it with valid projected lidar depths, fit beta in t = exp(-beta * depth), then compute MOR = 3.912 / beta.",
+			"higher_means": "Clearer image or longer estimated visibility.",
+			"lower_means": "Fogged or hazy image or shorter estimated visibility.",
+			"caveats": "Sensitive to atmospheric-light estimation, dark objects, shadows, sky regions, and RGB-lidar misalignment."
+		},
+		"mor_contrast_m": {
+			"label": "MOR from contrast decay",
+			"unit": "m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Approximate visibility range inferred from how image contrast decays with lidar depth.",
+			"conceptual_computation": "Compute local image contrast around valid lidar-backed pixels, aggregate by depth, fit contrast decay C(d) ~= C0 * exp(-beta * d), then compute MOR = 3.912 / beta.",
+			"higher_means": "Contrast persists farther into the scene; visibility appears better.",
+			"lower_means": "Contrast disappears quickly with distance; visibility appears worse.",
+			"caveats": "Scene texture can confound this estimate; naturally flat regions may look low-contrast without fog."
+		},
+		"beta_dcp": {
+			"label": "DCP extinction coefficient",
+			"unit": "1/m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Extinction coefficient proxy estimated from DCP transmission and lidar depth.",
+			"conceptual_computation": "For each valid sample, compute y = -log(t_dcp), then fit y ~= beta * depth using robust depth-bin statistics.",
+			"higher_means": "Stronger estimated atmospheric extinction; more fog or haze.",
+			"lower_means": "Weaker estimated atmospheric extinction; clearer scene.",
+			"caveats": "Bias in transmission estimates from object color or lighting carries into beta_dcp."
+		},
+		"beta_contrast": {
+			"label": "Contrast extinction coefficient",
+			"unit": "1/m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Extinction coefficient proxy estimated from the rate at which local visual contrast decreases with lidar depth.",
+			"conceptual_computation": "Compute local contrast for valid lidar-supported patches, aggregate by depth, then fit log(contrast) ~= log(C0) - beta * depth.",
+			"higher_means": "Contrast decays quickly with distance; likely more fog or haze.",
+			"lower_means": "Contrast remains visible over longer distances; likely clearer.",
+			"caveats": "Can be confounded by scene content when distant regions are naturally textureless."
+		},
+		"num_lidar_points_total": {
+			"label": "Raw lidar points",
+			"unit": "count",
+			"value_type": "number",
+			"per_file_value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Total number of lidar points available before camera projection and filtering.",
+			"conceptual_computation": "Count loaded lidar points before removing points behind the camera, outside the image, or otherwise invalid.",
+			"higher_means": "More raw lidar data was available for the frame.",
+			"lower_means": "Less raw lidar data was available for the frame.",
+			"caveats": "A high total does not guarantee many useful image samples because points may project outside the camera view."
+		},
+		"num_projected_points": {
+			"label": "Projected lidar points",
+			"unit": "count",
+			"value_type": "number",
+			"per_file_value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Number of lidar points that project into the RGB image bounds.",
+			"conceptual_computation": "Transform lidar points into the camera frame, project through camera intrinsics, and count points with positive depth inside the image.",
+			"higher_means": "More lidar support overlaps the camera image.",
+			"lower_means": "Less lidar support overlaps the camera image.",
+			"caveats": "This is before strict validity filtering, so it can include edge or alignment-corrupted samples."
+		},
+		"num_valid_points": {
+			"label": "Valid lidar points",
+			"unit": "count",
+			"value_type": "number",
+			"per_file_value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Number of projected lidar points considered trustworthy enough for the MOR fit.",
+			"conceptual_computation": "Start from projected points and reject samples near RGB edges, depth outliers, invalid contrast, or low-confidence lidar features.",
+			"higher_means": "The estimate has more usable evidence.",
+			"lower_means": "The estimate is based on little usable evidence and may be unreliable.",
+			"caveats": "Strict filtering intentionally lowers this count to avoid corrupted samples."
+		},
+		"valid_fraction": {
+			"label": "Valid projected fraction",
+			"unit": "fraction",
+			"value_type": "number",
+			"value_range": {"min": 0.0, "max": 1.0, "inclusive_min": True, "inclusive_max": True},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Fraction of projected lidar points that survived the validity filters.",
+			"conceptual_computation": "Compute num_valid_points / num_projected_points after camera projection.",
+			"higher_means": "A larger share of camera-overlapping lidar was usable.",
+			"lower_means": "Many projected points were rejected, often due to edges, sparse coverage, occlusions, or poor alignment.",
+			"caveats": "Very low values suggest low confidence; very high values are not meaningful if filtering is too permissive."
+		},
+		"median_depth_valid_m": {
+			"label": "Median valid depth",
+			"unit": "m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Typical distance of valid lidar points that contributed to the estimate.",
+			"conceptual_computation": "Take the median camera-frame depth of lidar samples that pass the validity filter.",
+			"higher_means": "The estimate is driven by farther-away samples.",
+			"lower_means": "The estimate is driven by nearer samples.",
+			"caveats": "MOR estimation is weaker when valid depths are mostly near-field."
+		},
+		"fit_mad": {
+			"label": "Fit median absolute deviation",
+			"unit": "residual",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Robust residual error of the fitted fog model.",
+			"conceptual_computation": "After fitting beta, compute residuals between observed values and model-predicted values, then take the median absolute deviation.",
+			"higher_means": "The fitted MOR is less internally consistent.",
+			"lower_means": "The fitted MOR is more internally consistent.",
+			"caveats": "A low residual means internal consistency, not physical correctness."
+		},
+		"fog_score_lidar": {
+			"label": "Lidar-aware fog score",
+			"unit": "score",
+			"value_type": "number",
+			"value_range": {"min": 0.0, "max": 1.0, "inclusive_min": True, "inclusive_max": True},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Convenience score summarizing how fog-like the frame appears according to lidar-aware evidence.",
+			"conceptual_computation": "Combine normalized evidence from low MOR, high beta, DCP haze, contrast decay, valid_fraction, and fit_mad into a bounded score.",
+			"higher_means": "More fog-like or lower visibility.",
+			"lower_means": "Clearer or higher visibility.",
+			"caveats": "This is a heuristic ranking metric, not a calibrated physical measurement."
+		}
+	},
+	"fields": {
+		"stats.sample_count": {
+			"label": "Profiled sample count",
+			"unit": "count",
+			"value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"description": "Number of samples that produced a per-file profile."
+		},
+		"stats.valid_count": {
+			"label": "Samples with valid lidar evidence",
+			"unit": "count",
+			"value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"description": "Number of profiled samples whose num_valid_points value is greater than zero."
+		},
+		"aggregate.sample_count": {
+			"label": "Aggregate sample count",
+			"unit": "count",
+			"value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"description": "Number of per-file profiles included in aggregate reducers."
+		},
+		"aggregate.valid_count": {
+			"label": "Aggregate valid count",
+			"unit": "count",
+			"value_type": "integer",
+			"value_range": {"min": 0, "max": None, "inclusive_min": True, "inclusive_max": None},
+			"description": "Number of aggregate input profiles with num_valid_points greater than zero."
+		}
+	}
+}
+
+
+def mor_output_glossary() -> dict[str, Any]:
+	return deepcopy(MOR_OUTPUT_GLOSSARY)
+
+
+def summarize_profiles(profiles: list[dict[str, Any]]) -> dict[str, Any]:
+	numeric_fields = MOR_PROFILE_METRIC_FIELDS
 
 	summary: dict[str, Any] = {
 		"sample_count": len(profiles),

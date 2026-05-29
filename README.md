@@ -30,6 +30,10 @@ JSON
 
 The command prints a single JSON document with per-file MOR profiles and aggregate summary statistics.
 
+The output includes a top-level `glossary` section. Metric definitions are shared between
+`per_file_info` and aggregate reducer outputs, and each metric entry includes display labels,
+units, value ranges, interpretation hints, and caveats for downstream visualization.
+
 ## Performance
 
 - The CLI will use `SLURM_CPUS_PER_TASK` automatically when present.
