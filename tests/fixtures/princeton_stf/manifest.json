@@ -1,0 +1,77 @@
+{
+  "familyId": 5,
+  "layout": "structured",
+  "fileIds": [
+    "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_00700",
+    "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_03700",
+    "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-27-03_03730"
+  ],
+  "sourceSplitIds": [
+    122,
+    121
+  ],
+  "archivedCount": 6,
+  "missing": [],
+  "files": [
+    {
+      "splitId": 122,
+      "datasetId": 92,
+      "datasetLabel": "princeton_stf",
+      "splitName": "dense_fog_day",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_00700",
+      "path": "rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_00700.tiff",
+      "archivePath": "princeton_stf+rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_00700.tiff",
+      "bytes": 2835570
+    },
+    {
+      "splitId": 122,
+      "datasetId": 92,
+      "datasetLabel": "princeton_stf",
+      "splitName": "dense_fog_day",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_03700",
+      "path": "rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_03700.tiff",
+      "archivePath": "princeton_stf+rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_03700.tiff",
+      "bytes": 2831598
+    },
+    {
+      "splitId": 122,
+      "datasetId": 92,
+      "datasetLabel": "princeton_stf",
+      "splitName": "dense_fog_day",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-27-03_03730",
+      "path": "rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-27-03_03730.tiff",
+      "archivePath": "princeton_stf+rgb/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-27-03_03730.tiff",
+      "bytes": 2880324
+    },
+    {
+      "splitId": 121,
+      "datasetId": 93,
+      "datasetLabel": "princeton_stf",
+      "splitName": "full",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_00700",
+      "path": "lidar/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_00700.bin",
+      "archivePath": "princeton_stf+sparse_depth/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_00700.bin",
+      "bytes": 765980
+    },
+    {
+      "splitId": 121,
+      "datasetId": 93,
+      "datasetLabel": "princeton_stf",
+      "splitName": "full",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-18-59_03700",
+      "path": "lidar/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_03700.bin",
+      "archivePath": "princeton_stf+sparse_depth/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-18-59_03700.bin",
+      "bytes": 621200
+    },
+    {
+      "splitId": 121,
+      "datasetId": 93,
+      "datasetLabel": "princeton_stf",
+      "splitName": "full",
+      "fileId": "day~none~dense_fog~dry~clean~highway~non_twilight~open_road~2018-10-08_08-27-03_03730",
+      "path": "lidar/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-27-03_03730.bin",
+      "archivePath": "princeton_stf+sparse_depth/day/none/dense_fog/dry/clean/highway/non_twilight/open_road/2018-10-08_08-27-03_03730.bin",
+      "bytes": 711800
+    }
+  ]
+}

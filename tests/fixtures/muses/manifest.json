@@ -1,0 +1,77 @@
+{
+  "familyId": 4,
+  "layout": "structured",
+  "fileIds": [
+    "test~fog~day~677253",
+    "test~fog~day~671430",
+    "train~fog~day~646133"
+  ],
+  "sourceSplitIds": [
+    73,
+    76
+  ],
+  "archivedCount": 6,
+  "missing": [],
+  "files": [
+    {
+      "splitId": 73,
+      "datasetId": 61,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "test~fog~day~677253",
+      "path": "muses/frame_camera/test/fog/day/REC0179_frame_677253_frame_camera.png",
+      "archivePath": "muses+rgb/test/fog/day/677253.png",
+      "bytes": 1803669
+    },
+    {
+      "splitId": 73,
+      "datasetId": 61,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "test~fog~day~671430",
+      "path": "muses/frame_camera/test/fog/day/REC0176_frame_671430_frame_camera.png",
+      "archivePath": "muses+rgb/test/fog/day/671430.png",
+      "bytes": 1896320
+    },
+    {
+      "splitId": 73,
+      "datasetId": 61,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "train~fog~day~646133",
+      "path": "muses/frame_camera/train/fog/day/REC0171_frame_646133_frame_camera.png",
+      "archivePath": "muses+rgb/train/fog/day/646133.png",
+      "bytes": 1910325
+    },
+    {
+      "splitId": 76,
+      "datasetId": 64,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "test~fog~day~677253",
+      "path": "muses/lidar/test/fog/day/REC0179_frame_677253_lidar.bin",
+      "archivePath": "muses+sparse_depth/test/fog/day/677253.bin",
+      "bytes": 1906560
+    },
+    {
+      "splitId": 76,
+      "datasetId": 64,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "test~fog~day~671430",
+      "path": "muses/lidar/test/fog/day/REC0176_frame_671430_lidar.bin",
+      "archivePath": "muses+sparse_depth/test/fog/day/671430.bin",
+      "bytes": 2699424
+    },
+    {
+      "splitId": 76,
+      "datasetId": 64,
+      "datasetLabel": "muses",
+      "splitName": "full",
+      "fileId": "train~fog~day~646133",
+      "path": "muses/lidar/train/fog/day/REC0171_frame_646133_lidar.bin",
+      "archivePath": "muses+sparse_depth/train/fog/day/646133.bin",
+      "bytes": 3213744
+    }
+  ]
+}
