@@ -393,6 +393,35 @@ def _estimate_mor(beta: float) -> Optional[float]:
 	return float(3.912 / max(beta, 1e-6))
 
 
+def _smoothstep(value: float, low: float, high: float) -> float:
+	if not np.isfinite(value):
+		return 0.0
+	if high <= low:
+		return 1.0 if value >= high else 0.0
+	t = float(np.clip((value - low) / (high - low), 0.0, 1.0))
+	return t * t * (3.0 - 2.0 * t)
+
+
+def _estimate_visibility_mor(
+	mor_dcp: Optional[float],
+	mor_contrast: Optional[float],
+	edge_clarity: float,
+) -> Optional[float]:
+	dcp = float(mor_dcp) if mor_dcp is not None and np.isfinite(mor_dcp) and mor_dcp > 0 else None
+	contrast = float(mor_contrast) if mor_contrast is not None and np.isfinite(mor_contrast) and mor_contrast > 0 else None
+	if dcp is None:
+		return contrast
+	clarity = float(np.clip(edge_clarity, 0.0, 1.0))
+	if clarity <= 0.0:
+		return dcp
+
+	edge_target = 70.0 + 150.0 * clarity
+	if contrast is not None and contrast < 1000.0:
+		contrast_target = min(220.0, max(contrast, dcp))
+		edge_target = 0.7 * edge_target + 0.3 * contrast_target
+	return float(max(dcp, edge_target))
+
+
 def _ensure_positive(values: np.ndarray, floor: float = 1e-6) -> np.ndarray:
 	return np.clip(values, floor, None)
 
@@ -437,8 +466,10 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 	num_lidar_points_total = int(points.shape[0]) if points is not None else 0
 	if points is None or points.size == 0:
 		return {
+			"mor_visibility_m": None,
 			"mor_dcp_m": None,
 			"mor_contrast_m": None,
+			"beta_visibility": None,
 			"beta_dcp": None,
 			"beta_contrast": None,
 			"num_lidar_points_total": num_lidar_points_total,
@@ -459,8 +490,10 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 	projected_count = int(projected_depths.size)
 	if projected_count == 0:
 		return {
+			"mor_visibility_m": None,
 			"mor_dcp_m": None,
 			"mor_contrast_m": None,
+			"beta_visibility": None,
 			"beta_dcp": None,
 			"beta_contrast": None,
 			"num_lidar_points_total": num_lidar_points_total,
@@ -482,8 +515,10 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 		valid_fraction = 1.0
 		median_depth = float(np.median(depths)) if depths.size else None
 		return {
+			"mor_visibility_m": mor_from_depths,
 			"mor_dcp_m": mor_from_depths,
 			"mor_contrast_m": mor_from_depths,
+			"beta_visibility": beta,
 			"beta_dcp": beta,
 			"beta_contrast": beta,
 			"num_lidar_points_total": num_lidar_points_total,
@@ -497,6 +532,8 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 
 	luminance = np.dot(image[..., :3], np.array([0.2126, 0.7152, 0.0722], dtype=np.float64))
 	edge_map = _compute_edge_map(luminance)
+	edge_q99 = float(np.nanquantile(edge_map, 0.99)) if np.isfinite(edge_map).any() else 0.0
+	edge_clarity = _smoothstep(edge_q99, 0.025, 0.07)
 	dark_channel = _compute_dark_channel(image, radius=3)
 	atmospheric_light = _estimate_atmospheric_light(image)
 	atmospheric_light = np.maximum(atmospheric_light, 1e-3)
@@ -585,6 +622,9 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 		mor_contrast = _estimate_mor(beta_contrast)
 		contrast_residual_mad = float(np.median(np.abs(contrast_residuals))) if contrast_residuals.size else None
 
+	mor_visibility = _estimate_visibility_mor(mor_dcp, mor_contrast, edge_clarity)
+	beta_visibility = 3.912 / mor_visibility if mor_visibility is not None and mor_visibility > 0 else None
+
 	fit_residual_candidates = [value for value in (dcp_residual_mad, contrast_residual_mad) if value is not None and np.isfinite(value)]
 	if fit_residual_candidates:
 		fit_mad = float(np.median(np.asarray(fit_residual_candidates, dtype=np.float64)))
@@ -600,6 +640,8 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 		score_components.append(float(np.clip(1.0 - np.exp(-80.0 / max(mor_dcp, 1e-6)), 0.0, 1.0)))
 	if mor_contrast is not None:
 		score_components.append(float(np.clip(1.0 - np.exp(-80.0 / max(mor_contrast, 1e-6)), 0.0, 1.0)))
+	if mor_visibility is not None:
+		score_components.append(float(np.clip(1.0 - np.exp(-80.0 / max(mor_visibility, 1e-6)), 0.0, 1.0)))
 
 	if score_components:
 		fog_evidence = float(np.mean(score_components))
@@ -612,8 +654,10 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 	fog_score_lidar = float(np.clip(fog_evidence * (0.4 + 0.6 * confidence_penalty), 0.0, 1.0))
 
 	return {
+		"mor_visibility_m": float(mor_visibility) if mor_visibility is not None else None,
 		"mor_dcp_m": float(mor_dcp) if mor_dcp is not None else None,
 		"mor_contrast_m": float(mor_contrast) if mor_contrast is not None else None,
+		"beta_visibility": float(beta_visibility) if beta_visibility is not None else None,
 		"beta_dcp": float(beta_dcp) if beta_dcp is not None else None,
 		"beta_contrast": float(beta_contrast) if beta_contrast is not None else None,
 		"num_lidar_points_total": num_lidar_points_total,
@@ -689,8 +733,10 @@ def summarize_mor_values(mor_values: Any) -> dict[str, dict[str, Optional[float]
 
 
 MOR_PROFILE_METRIC_FIELDS = [
+		"mor_visibility_m",
 		"mor_dcp_m",
 		"mor_contrast_m",
+		"beta_visibility",
 		"beta_dcp",
 		"beta_contrast",
 		"num_lidar_points_total",
@@ -725,6 +771,18 @@ MOR_OUTPUT_GLOSSARY: dict[str, Any] = {
 		}
 	},
 	"metrics": {
+		"mor_visibility_m": {
+			"label": "Fused MOR estimate",
+			"unit": "m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Primary approximate meteorological optical range estimate fused from DCP, contrast, and global edge-clarity evidence.",
+			"conceptual_computation": "Use DCP-derived MOR as the dense-fog anchor. When high-percentile image edges indicate substantial visible structure, raise the estimate with a bounded edge-clarity prior and bounded contrast support.",
+			"higher_means": "Clearer image or longer estimated visibility.",
+			"lower_means": "Fogged or hazy image or shorter estimated visibility.",
+			"caveats": "This is the preferred rough visibility estimate, but it is still heuristic and can be affected by image sharpening, motion blur, rain streaks, and scene texture."
+		},
 		"mor_dcp_m": {
 			"label": "MOR from dark channel prior",
 			"unit": "m",
@@ -760,6 +818,18 @@ MOR_OUTPUT_GLOSSARY: dict[str, Any] = {
 			"higher_means": "Stronger estimated atmospheric extinction; more fog or haze.",
 			"lower_means": "Weaker estimated atmospheric extinction; clearer scene.",
 			"caveats": "Bias in transmission estimates from object color or lighting carries into beta_dcp. This is a heuristic estimator, not a calibrated physical scattering model."
+		},
+		"beta_visibility": {
+			"label": "Fused extinction coefficient",
+			"unit": "1/m",
+			"value_type": "number|null",
+			"value_range": {"min": 0.0, "max": None, "inclusive_min": False, "inclusive_max": None},
+			"emitted_in": ["per_file_info", "aggregate.mean", "aggregate.median", "aggregate.p90"],
+			"description": "Extinction coefficient implied by mor_visibility_m.",
+			"conceptual_computation": "Compute beta_visibility = 3.912 / mor_visibility_m for finite positive fused MOR estimates.",
+			"higher_means": "Stronger estimated atmospheric extinction; more fog or haze.",
+			"lower_means": "Weaker estimated atmospheric extinction; clearer scene.",
+			"caveats": "Derived directly from the fused MOR estimate; inherits its heuristic assumptions."
 		},
 		"beta_contrast": {
 			"label": "Contrast extinction coefficient",
@@ -926,7 +996,7 @@ def summarize_profiles(profiles: list[dict[str, Any]]) -> dict[str, Any]:
 
 def estimate_mor_from_sample(sample: dict[str, Any]) -> Optional[float]:
 	profile = estimate_mor_profile_from_sample(sample)
-	for field in ("mor_dcp_m", "mor_contrast_m"):
+	for field in ("mor_visibility_m", "mor_dcp_m", "mor_contrast_m"):
 		value = profile.get(field)
 		if isinstance(value, (int, float)) and np.isfinite(float(value)) and float(value) > 0:
 			return float(value)
