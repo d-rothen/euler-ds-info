@@ -6,6 +6,19 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 
+MOR_VALIDITY_PRESETS: dict[str, dict[str, float]] = {
+	"sensible": {
+		"edge_keep_quantile": 0.95,
+		"min_lidar_confidence": 0.10,
+		"depth_upper_quantile": 0.995,
+		"depth_upper_iqr_multiplier": 20.0,
+		"min_depth_points_for_outlier_filter": 16.0,
+		"min_depth_points_for_quantile_cap": 200.0,
+	}
+}
+DEFAULT_MOR_VALIDITY_PRESET = "sensible"
+
+
 def _to_numpy(value: Any) -> Optional[np.ndarray]:
 	if value is None:
 		return None
@@ -209,14 +222,16 @@ def _project_points(
 ) -> dict[str, np.ndarray]:
 	if points.size == 0:
 		empty = np.empty((0,), dtype=np.float64)
-		return {"depth": empty, "u": empty, "v": empty, "mask": empty.astype(bool)}
+		return {"depth": empty, "u": empty, "v": empty, "mask": empty.astype(bool), "index": empty.astype(np.int64)}
 
+	source_index = np.arange(points.shape[0], dtype=np.int64)
 	valid = np.isfinite(points).all(axis=1)
 	valid &= points[:, 2] > 0
 	points = points[valid]
+	source_index = source_index[valid]
 	if points.size == 0:
 		empty = np.empty((0,), dtype=np.float64)
-		return {"depth": empty, "u": empty, "v": empty, "mask": empty.astype(bool)}
+		return {"depth": empty, "u": empty, "v": empty, "mask": empty.astype(bool), "index": empty.astype(np.int64)}
 
 	depth = points[:, 2]
 	if intrinsics is None:
@@ -224,7 +239,8 @@ def _project_points(
 			"depth": depth,
 			"u": np.full(depth.shape, np.nan, dtype=np.float64),
 			"v": np.full(depth.shape, np.nan, dtype=np.float64),
-			"mask": np.ones(depth.shape, dtype=bool)
+			"mask": np.ones(depth.shape, dtype=bool),
+			"index": source_index,
 		}
 
 	matrix = np.asarray(intrinsics, dtype=np.float64)
@@ -233,7 +249,8 @@ def _project_points(
 			"depth": depth,
 			"u": np.full(depth.shape, np.nan, dtype=np.float64),
 			"v": np.full(depth.shape, np.nan, dtype=np.float64),
-			"mask": np.ones(depth.shape, dtype=bool)
+			"mask": np.ones(depth.shape, dtype=bool),
+			"index": source_index,
 		}
 
 	z = depth
@@ -253,7 +270,7 @@ def _project_points(
 		height, width = rgb_shape
 		mask &= (u >= 0) & (v >= 0) & (u < width) & (v < height)
 
-	return {"depth": z[mask], "u": u[mask], "v": v[mask], "mask": mask}
+	return {"depth": z[mask], "u": u[mask], "v": v[mask], "mask": mask, "index": source_index[mask]}
 
 
 def _pick_channel_axis(image: np.ndarray) -> np.ndarray:
@@ -426,6 +443,42 @@ def _ensure_positive(values: np.ndarray, floor: float = 1e-6) -> np.ndarray:
 	return np.clip(values, floor, None)
 
 
+def _validity_preset(name: str = DEFAULT_MOR_VALIDITY_PRESET) -> dict[str, float]:
+	return MOR_VALIDITY_PRESETS.get(name, MOR_VALIDITY_PRESETS[DEFAULT_MOR_VALIDITY_PRESET])
+
+
+def _finite_quantile(values: np.ndarray, quantile: float) -> Optional[float]:
+	finite = np.asarray(values, dtype=np.float64)
+	finite = finite[np.isfinite(finite)]
+	if finite.size == 0:
+		return None
+	return float(np.quantile(finite, quantile))
+
+
+def _depth_consistency_mask(depths: np.ndarray, preset: dict[str, float]) -> np.ndarray:
+	depths = np.asarray(depths, dtype=np.float64)
+	finite = np.isfinite(depths) & (depths > 0)
+	finite_depths = depths[finite]
+	min_points = int(preset["min_depth_points_for_outlier_filter"])
+	if finite_depths.size < min_points:
+		return finite
+
+	q25, q75 = np.quantile(finite_depths, [0.25, 0.75])
+	iqr = float(q75 - q25)
+	if not np.isfinite(iqr) or iqr <= 1e-6:
+		iqr = float(np.nanstd(finite_depths))
+	if not np.isfinite(iqr) or iqr <= 1e-6:
+		iqr = max(1.0, 0.1 * float(np.nanmedian(finite_depths)))
+
+	fence_cap = float(q75 + preset["depth_upper_iqr_multiplier"] * iqr)
+	upper_depth = fence_cap
+	if finite_depths.size >= int(preset["min_depth_points_for_quantile_cap"]):
+		quantile_cap = _finite_quantile(finite_depths, preset["depth_upper_quantile"])
+		if quantile_cap is not None:
+			upper_depth = max(upper_depth, quantile_cap)
+	return finite & (depths <= upper_depth)
+
+
 def _normalized_confidence(sample_confidence: Optional[np.ndarray], projected_count: int, valid_mask: np.ndarray) -> np.ndarray:
 	if sample_confidence is None:
 		return np.ones((projected_count,), dtype=np.float64)
@@ -487,6 +540,7 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 	projected = _project_points(camera_points, intrinsics_matrix, rgb_shape)
 
 	projected_depths = np.asarray(projected["depth"], dtype=np.float64)
+	projected_indices = np.asarray(projected["index"], dtype=np.int64)
 	projected_count = int(projected_depths.size)
 	if projected_count == 0:
 		return {
@@ -554,29 +608,25 @@ def estimate_mor_profile_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 
 	confidence_values = None
 	if points.shape[1] >= 4:
-		confidence_values = np.asarray(points[:, 3], dtype=np.float64)
-		if confidence_values.shape[0] != projected_count:
-			confidence_values = confidence_values[:projected_count]
+		all_confidence_values = np.asarray(points[:, 3], dtype=np.float64)
+		if projected_indices.size == projected_count:
+			confidence_values = all_confidence_values[projected_indices]
+		else:
+			confidence_values = all_confidence_values[:projected_count]
 
+	validity = _validity_preset()
 	confidence = _normalized_confidence(confidence_values, projected_count, np.ones(projected_count, dtype=bool))
-	edge_threshold = float(np.nanquantile(local_edge, 0.8)) if np.isfinite(local_edge).any() else 0.0
+	edge_threshold = _finite_quantile(local_edge, validity["edge_keep_quantile"]) or 0.0
 	if not np.isfinite(edge_threshold) or edge_threshold <= 0:
 		edge_threshold = float(np.nanmean(local_edge)) if np.isfinite(local_edge).any() else 0.0
 	if not np.isfinite(edge_threshold) or edge_threshold <= 0:
 		edge_threshold = 1.0
 
 	depths = _ensure_positive(projected_depths)
-	depth_median = float(np.nanmedian(depths)) if depths.size else 0.0
-	depth_mad = float(np.nanmedian(np.abs(depths - depth_median))) if depths.size else 0.0
-	if not np.isfinite(depth_mad) or depth_mad <= 1e-6:
-		depth_mad = float(np.nanstd(depths)) if depths.size else 0.0
-	if not np.isfinite(depth_mad) or depth_mad <= 1e-6:
-		depth_mad = max(1.0, 0.1 * depth_median)
-
-	depth_consistency = np.abs(depths - depth_median) <= (4.0 * max(depth_mad, 1e-6))
+	depth_consistency = _depth_consistency_mask(depths, validity)
 	edge_consistency = local_edge <= edge_threshold
 	contrast_consistency = np.isfinite(contrast) & (contrast > 0)
-	confidence_consistency = confidence >= 0.15
+	confidence_consistency = confidence >= validity["min_lidar_confidence"]
 
 	valid_mask = depth_consistency & edge_consistency & contrast_consistency & confidence_consistency & np.isfinite(local_dark)
 	num_valid_points = int(valid_mask.sum())

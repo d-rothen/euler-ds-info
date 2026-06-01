@@ -7,8 +7,11 @@ from unittest.mock import patch
 import numpy as np
 
 from euler_ds_info.mor import (
+	_depth_consistency_mask,
 	_estimate_beta_from_depth_response,
 	_estimate_visibility_mor,
+	_project_points,
+	_validity_preset,
 	estimate_mor_profile_from_sample,
 	estimate_mor_from_sample,
 )
@@ -45,6 +48,54 @@ class MorEstimatorTests(unittest.TestCase):
 		self.assertAlmostEqual(_estimate_visibility_mor(72.0, 500.0, 0.0) or 0.0, 72.0)
 		self.assertGreater(_estimate_visibility_mor(55.0, 230.0, 0.65) or 0.0, 150.0)
 		self.assertLess(_estimate_visibility_mor(55.0, 230.0, 0.65) or 999.0, 220.0)
+
+	def test_depth_validity_preserves_far_field_tail(self) -> None:
+		depths = np.concatenate(
+			[
+				np.linspace(8.0, 18.0, 40, dtype=np.float64),
+				np.array([40.0, 60.0, 90.0, 120.0], dtype=np.float64),
+			]
+		)
+
+		mask = _depth_consistency_mask(depths, _validity_preset())
+
+		self.assertTrue(mask[-4:].all())
+
+	def test_depth_validity_rejects_extreme_singleton_outlier(self) -> None:
+		depths = np.concatenate(
+			[
+				np.linspace(8.0, 18.0, 40, dtype=np.float64),
+				np.array([40.0, 60.0, 90.0, 120.0, 10000.0], dtype=np.float64),
+			]
+		)
+
+		mask = _depth_consistency_mask(depths, _validity_preset())
+
+		self.assertTrue(mask[-2])
+		self.assertFalse(mask[-1])
+
+	def test_projection_returns_source_indices_for_projected_points(self) -> None:
+		points = np.array(
+			[
+				[0.0, 0.0, -1.0],
+				[0.0, 0.0, 10.0],
+				[1.0, 1.0, 20.0],
+				[1000.0, 0.0, 30.0],
+			],
+			dtype=np.float64,
+		)
+		intrinsics = np.array(
+			[
+				[10.0, 0.0, 2.0],
+				[0.0, 10.0, 2.0],
+				[0.0, 0.0, 1.0],
+			],
+			dtype=np.float64,
+		)
+
+		projected = _project_points(points, intrinsics, (6, 6))
+
+		np.testing.assert_array_equal(projected["index"], np.array([1, 2], dtype=np.int64))
 
 	def test_fixture_samples_preserve_dataset_ordering(self) -> None:
 		try:
